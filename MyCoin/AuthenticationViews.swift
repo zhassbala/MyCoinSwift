@@ -2,7 +2,7 @@ import SwiftUI
 import AuthenticationServices
 
 struct LoginView: View {
-    @State private var email = ""
+    @State private var username = ""
     @State private var password = ""
     @State private var isShowingRegistration = false
     @EnvironmentObject private var authViewModel: AuthenticationViewModel
@@ -19,9 +19,9 @@ struct LoginView: View {
                     .foregroundColor(.secondary)
                 
                 VStack(spacing: 15) {
-                    TextField("Email", text: $email)
+                    TextField("Username", text: $username)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .textContentType(.emailAddress)
+                        .textContentType(.username)
                         .autocapitalization(.none)
                     
                     SecureField("Password", text: $password)
@@ -38,7 +38,7 @@ struct LoginView: View {
                 
                 Button {
                     Task {
-                        await authViewModel.signIn(email: email, password: password)
+                        await authViewModel.signIn(username: username, password: password)
                     }
                 } label: {
                     if case .authenticating = authViewModel.state {
@@ -85,6 +85,7 @@ struct LoginView: View {
                     }
                 )
                 .frame(height: 44)
+                .padding(.bottom)
                 
                 Button(action: handleGoogleSignIn) {
                     HStack {
@@ -110,7 +111,7 @@ struct LoginView: View {
     }
     
     private func handleGoogleSignIn() {
-        // TODO: Implement Google Sign In
+        // Mock Google Sign In
         Task {
             await authViewModel.signInWithGoogle(
                 userId: UUID().uuidString,
@@ -124,17 +125,18 @@ struct LoginView: View {
 struct RegistrationView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var authViewModel: AuthenticationViewModel
+    @State private var username = ""
     @State private var email = ""
     @State private var password = ""
     @State private var confirmPassword = ""
-    @State private var fullName = ""
     
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Personal Information")) {
-                    TextField("Full Name", text: $fullName)
-                        .textContentType(.name)
+                Section(header: Text("Account Information")) {
+                    TextField("Username", text: $username)
+                        .textContentType(.username)
+                        .autocapitalization(.none)
                     
                     TextField("Email", text: $email)
                         .textContentType(.emailAddress)
@@ -165,9 +167,9 @@ struct RegistrationView: View {
                         
                         Task {
                             await authViewModel.signUp(
+                                username: username,
                                 email: email,
-                                password: password,
-                                fullName: fullName
+                                password: password
                             )
                             if authViewModel.isAuthenticated {
                                 dismiss()

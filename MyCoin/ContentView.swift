@@ -140,7 +140,9 @@ struct ProfileView: View {
                     }
                     
                     Button("Sign Out", role: .destructive) {
-                        authViewModel.signOut()
+                        Task {
+                            await authViewModel.signOut()
+                        }
                     }
                 }
                 
