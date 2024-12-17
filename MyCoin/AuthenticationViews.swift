@@ -22,7 +22,7 @@ struct LoginView: View {
                     TextField("Username", text: $username)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .textContentType(.username)
-                        .autocapitalization(.none)
+                        .textInputAutocapitalization(.never)
                     
                     SecureField("Password", text: $password)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -87,7 +87,11 @@ struct LoginView: View {
                 .frame(height: 44)
                 .padding(.bottom)
                 
-                Button(action: handleGoogleSignIn) {
+                Button(action: {
+                    Task {
+                        await authViewModel.signInWithGoogle(idToken: "mock_token")
+                    }
+                }) {
                     HStack {
                         Image(systemName: "g.circle.fill")
                             .foregroundColor(.red)
@@ -109,17 +113,6 @@ struct LoginView: View {
             }
         }
     }
-    
-    private func handleGoogleSignIn() {
-        // Mock Google Sign In
-        Task {
-            await authViewModel.signInWithGoogle(
-                userId: UUID().uuidString,
-                email: "google@example.com",
-                fullName: "Google User"
-            )
-        }
-    }
 }
 
 struct RegistrationView: View {
@@ -136,11 +129,11 @@ struct RegistrationView: View {
                 Section(header: Text("Account Information")) {
                     TextField("Username", text: $username)
                         .textContentType(.username)
-                        .autocapitalization(.none)
+                        .textInputAutocapitalization(.never)
                     
                     TextField("Email", text: $email)
                         .textContentType(.emailAddress)
-                        .autocapitalization(.none)
+                        .textInputAutocapitalization(.never)
                 }
                 
                 Section(header: Text("Security")) {

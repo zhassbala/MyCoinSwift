@@ -60,67 +60,143 @@ struct MainTabView: View {
 }
 
 struct DashboardView: View {
+    @StateObject private var viewModel = TokenViewModel()
+    
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
-                    WatchlistSection()
-                    MarketSentimentSection()
+                    WatchlistSection(viewModel: viewModel)
+                    MarketSentimentSection(viewModel: viewModel)
                     NewsletterSection()
                 }
                 .padding()
             }
             .navigationTitle("Dashboard")
+            .refreshable {
+                Task {
+                    await viewModel.fetchTokens()
+                    await viewModel.fetchWatchlist()
+                }
+            }
         }
     }
 }
 
 struct ExploreView: View {
-    @Query private var tokens: [Token]
+    @StateObject private var viewModel = TokenViewModel()
     @State private var searchText = ""
-    
-    var filteredTokens: [Token] {
-        if searchText.isEmpty {
-            return tokens
-        }
-        return tokens.filter { token in
-            token.cryptocompareCoinname.localizedCaseInsensitiveContains(searchText) ||
-            token.cryptocompareSymbol.localizedCaseInsensitiveContains(searchText)
-        }
-    }
+    @State private var selectedToken: Token?
+    @State private var showingTokenDetail = false
     
     var body: some View {
         NavigationView {
-            List(filteredTokens, id: \.cryptocompareId) { token in
-                TokenRow(token: token)
+            ZStack {
+                if viewModel.isLoading {
+                    ProgressView()
+                } else if let error = viewModel.error {
+                    VStack {
+                        Text(error)
+                            .foregroundColor(.red)
+                        Button("Try Again") {
+                            Task {
+                                await viewModel.fetchTokens()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                } else {
+                    List {
+                        ForEach(viewModel.filterTokens(by: searchText), id: \.cryptocompareId) { token in
+                            TokenRow(token: token, onWatchlistToggle: {
+                                Task {
+                                    await viewModel.toggleWatchlist(for: token)
+                                }
+                            }, viewModel: viewModel)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectedToken = token
+                                showingTokenDetail = true
+                            }
+                        }
+                    }
+                    .searchable(text: $searchText, prompt: "Search tokens")
+                    .refreshable {
+                        await viewModel.fetchTokens()
+                    }
+                }
             }
-            .searchable(text: $searchText, prompt: "Search tokens")
             .navigationTitle("Explore")
+            .sheet(isPresented: $showingTokenDetail) {
+                if let token = selectedToken {
+                    TokenDetailView(token: token)
+                }
+            }
+        }
+        .task {
+            await viewModel.fetchTokens()
         }
     }
 }
 
 struct WatchlistView: View {
-    @Query(filter: #Predicate<Token> { token in
-        token.isInWatchlist
-    }) private var watchlistTokens: [Token]
+    @StateObject private var viewModel = TokenViewModel()
+    @State private var selectedToken: Token?
+    @State private var showingTokenDetail = false
     
     var body: some View {
         NavigationView {
-            List {
-                if watchlistTokens.isEmpty {
-                    ContentUnavailableView(
-                        "No Tokens in Watchlist",
-                        systemImage: "star.slash",
-                        description: Text("Add tokens from the Explore tab to track them here")
-                    )
+            ZStack {
+                if viewModel.isLoading {
+                    ProgressView()
+                } else if let error = viewModel.error {
+                    VStack {
+                        Text(error)
+                            .foregroundColor(.red)
+                        Button("Try Again") {
+                            Task {
+                                await viewModel.fetchWatchlist()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 } else {
-                    ForEach(watchlistTokens, id: \.cryptocompareId) { token in
-                        TokenRow(token: token)
+                    if viewModel.watchlistTokens.isEmpty {
+                        ContentUnavailableView(
+                            "No Tokens in Watchlist",
+                            systemImage: "star.slash",
+                            description: Text("Add tokens from the Explore tab to track them here")
+                        )
+                    } else {
+                        List {
+                            ForEach(viewModel.watchlistTokens, id: \.cryptocompareId) { token in
+                                TokenRow(token: token, onWatchlistToggle: {
+                                    Task {
+                                        await viewModel.toggleWatchlist(for: token)
+                                    }
+                                }, viewModel: viewModel)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selectedToken = token
+                                    showingTokenDetail = true
+                                }
+                            }
+                        }
+                        .refreshable {
+                            await viewModel.fetchWatchlist()
+                        }
                     }
                 }
             }
             .navigationTitle("Watchlist")
+            .sheet(isPresented: $showingTokenDetail) {
+                if let token = selectedToken {
+                    TokenDetailView(token: token)
+                }
+            }
+        }
+        .task {
+            await viewModel.fetchWatchlist()
         }
     }
 }
@@ -172,14 +248,15 @@ struct ProfileView: View {
 
 struct TokenRow: View {
     let token: Token
-    @Environment(\.modelContext) private var modelContext
+    let onWatchlistToggle: () -> Void
+    @ObservedObject var viewModel: TokenViewModel
     
     var body: some View {
         HStack {
             VStack(alignment: .leading) {
-                Text(token.cryptocompareCoinname)
+                Text(token.coinname)
                     .font(.headline)
-                Text(token.cryptocompareSymbol)
+                Text(token.symbol)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -200,18 +277,246 @@ struct TokenRow: View {
                 .font(.caption)
             }
             
-            Button {
-                withAnimation {
-                    token.isInWatchlist.toggle()
-                    // TODO: Sync with backend
-                }
-            } label: {
-                Image(systemName: token.isInWatchlist ? "star.fill" : "star")
-                    .foregroundColor(token.isInWatchlist ? .yellow : .gray)
+            Button(action: onWatchlistToggle) {
+                Image(systemName: viewModel.isInWatchlist(token) ? "star.fill" : "star")
+                    .foregroundColor(viewModel.isInWatchlist(token) ? .yellow : .gray)
             }
             .buttonStyle(.plain)
         }
         .padding(.vertical, 8)
+    }
+}
+
+struct TokenDetailView: View {
+    let token: Token
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var viewModel = TokenViewModel()
+    @State private var detailedToken: Token?
+    @State private var selectedTab = 0
+    @State private var isLoading = true
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Header Section
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(token.coinname)
+                                .font(.title)
+                                .bold()
+                            Text(token.symbol)
+                                .font(.title3)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Text("\(token.totalPerc, specifier: "%.2f")%")
+                            .font(.title2)
+                            .bold()
+                            .foregroundColor(token.totalPerc >= 0 ? .green : .red)
+                    }
+                    
+                    AsyncImage(url: URL(string: token.imageUrl)) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 60, height: 60)
+                    } placeholder: {
+                        ProgressView()
+                    }
+                    
+                    Divider()
+                    
+                    // Market Sentiment Section
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Market Sentiment")
+                            .font(.headline)
+                        
+                        HStack(spacing: 20) {
+                            VStack {
+                                Text("Bullish")
+                                    .foregroundColor(.green)
+                                Text("\(token.bullish)")
+                                    .font(.title3)
+                                    .bold()
+                            }
+                            
+                            VStack {
+                                Text("Neutral")
+                                    .foregroundColor(.gray)
+                                Text("\(token.neutral)")
+                                    .font(.title3)
+                                    .bold()
+                            }
+                            
+                            VStack {
+                                Text("Bearish")
+                                    .foregroundColor(.red)
+                                Text("\(token.bearish)")
+                                    .font(.title3)
+                                    .bold()
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .padding()
+                    .background(Color(.systemBackground))
+                    .cornerRadius(10)
+                    .shadow(radius: 2)
+                    
+                    // Detailed Data Tabs
+                    VStack(alignment: .leading, spacing: 0) {
+                        Picker("Data Source", selection: $selectedTab) {
+                            Text("Code").tag(0)
+                            Text("Social").tag(1)
+                            Text("Community").tag(2)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.bottom)
+                        
+                        if isLoading {
+                            VStack {
+                                ProgressView()
+                                Text("Loading details...")
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(height: 250)
+                            .frame(maxWidth: .infinity)
+                        } else if let error = viewModel.error {
+                            VStack(spacing: 10) {
+                                Text(error)
+                                    .foregroundColor(.red)
+                                    .multilineTextAlignment(.center)
+                                Button("Try Again") {
+                                    Task {
+                                        isLoading = true
+                                        detailedToken = await viewModel.fetchTokenDetails(tokenId: token.cryptocompareId)
+                                        isLoading = false
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            .frame(height: 250)
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            TabView(selection: $selectedTab) {
+                                // Code Repository Tab
+                                VStack(alignment: .leading, spacing: 10) {
+                                    if let codrepo = detailedToken?.codrepo {
+                                        DetailRow(label: "Stars", value: "\(codrepo.stars)")
+                                        DetailRow(label: "Forks", value: "\(codrepo.forks)")
+                                        DetailRow(label: "Contributors", value: "\(codrepo.contributors)")
+                                        DetailRow(label: "Closed Issues", value: "\(codrepo.closedTotalIssues)")
+                                        DetailRow(label: "Subscribers", value: "\(codrepo.subscribers)")
+                                    } else {
+                                        Text("No repository data available")
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .tag(0)
+                                
+                                // Social Media Tab
+                                VStack(alignment: .leading, spacing: 20) {
+                                    if let twitter = detailedToken?.twitter {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            Text("Twitter")
+                                                .font(.headline)
+                                                .padding(.top, 50)
+                                            DetailRow(label: "Followers", value: "\(twitter.followers)")
+                                            DetailRow(label: "Following", value: "\(twitter.following)")
+                                            DetailRow(label: "Lists", value: "\(twitter.lists)")
+                                            DetailRow(label: "Tweets", value: "\(twitter.statuses)")
+                                        }
+                                    }
+                                    
+                                    if let facebook = detailedToken?.facebook {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            Text("Facebook")
+                                                .font(.headline)
+                                            DetailRow(label: "Likes", value: "\(facebook.likes)")
+                                            DetailRow(label: "Talking About", value: "\(facebook.talkingAbout)")
+                                        }
+                                    }
+                                    
+                                    if detailedToken?.twitter == nil && detailedToken?.facebook == nil {
+                                        Text("No social media data available")
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .tag(1)
+                                
+                                // Community Tab
+                                VStack(alignment: .leading, spacing: 10) {
+                                    if let reddit = detailedToken?.reddit {
+                                        Text("Reddit")
+                                            .font(.headline)
+                                        DetailRow(label: "Subscribers", value: "\(reddit.subscribers)")
+                                        DetailRow(label: "Active Users", value: "\(reddit.activeUsers)")
+                                        DetailRow(label: "Posts per Day", value: String(format: "%.2f", reddit.postsPerDay))
+                                        DetailRow(label: "Comments per Day", value: String(format: "%.2f", reddit.commentsPerDay))
+                                    } else {
+                                        Text("No community data available")
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .tag(2)
+                            }
+                            .frame(height: 250)
+                        }
+                    }
+                    .padding()
+                    .background(Color(.systemBackground))
+                    .cornerRadius(10)
+                    .shadow(radius: 2)
+                }
+                .padding()
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarItems(trailing: Button("Done") {
+                dismiss()
+            })
+        }
+        .task {
+            // Start loading detailed data immediately
+            Task {
+                isLoading = true
+                detailedToken = await viewModel.fetchTokenDetails(tokenId: token.cryptocompareId)
+                isLoading = false
+            }
+        }
+    }
+}
+
+struct DetailRow: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .bold()
+        }
+    }
+}
+
+struct SentimentRow: View {
+    let label: String
+    let value: Double
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text("\(value, specifier: "%.2f")%")
+                .foregroundColor(value >= 50 ? .green : .red)
+        }
     }
 }
 

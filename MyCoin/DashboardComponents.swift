@@ -2,9 +2,9 @@ import SwiftUI
 import SwiftData
 
 struct WatchlistSection: View {
-    @Query(filter: #Predicate<Token> { token in
-        token.isInWatchlist
-    }) private var watchlistTokens: [Token]
+    @ObservedObject var viewModel: TokenViewModel
+    @State private var selectedToken: Token?
+    @State private var showingTokenDetail = false
     
     var body: some View {
         VStack(alignment: .leading) {
@@ -12,20 +12,40 @@ struct WatchlistSection: View {
                 .font(.title2)
                 .bold()
             
-            if watchlistTokens.isEmpty {
+            if viewModel.isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding()
+            } else if let error = viewModel.error {
+                Text(error)
+                    .foregroundColor(.red)
+                    .padding()
+            } else if viewModel.watchlistTokens.isEmpty {
                 Text("Add tokens to your watchlist to track them here")
                     .foregroundColor(.secondary)
                     .padding()
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 15) {
-                        ForEach(watchlistTokens.prefix(5), id: \.cryptocompareId) { token in
+                        ForEach(viewModel.watchlistTokens.prefix(5), id: \.cryptocompareId) { token in
                             WatchlistCard(token: token)
+                                .onTapGesture {
+                                    selectedToken = token
+                                    showingTokenDetail = true
+                                }
                         }
                     }
                     .padding(.horizontal)
                 }
             }
+        }
+        .sheet(isPresented: $showingTokenDetail) {
+            if let token = selectedToken {
+                TokenDetailView(token: token)
+            }
+        }
+        .task {
+            await viewModel.fetchWatchlist()
         }
     }
 }
@@ -36,14 +56,14 @@ struct WatchlistCard: View {
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
-                Text(token.cryptocompareSymbol)
+                Text(token.symbol)
                     .font(.headline)
                 Spacer()
                 Image(systemName: "star.fill")
                     .foregroundColor(.yellow)
             }
             
-            Text(token.cryptocompareCoinname)
+            Text(token.coinname)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             
@@ -58,17 +78,14 @@ struct WatchlistCard: View {
         .background(Color(.systemBackground))
         .cornerRadius(10)
         .shadow(radius: 2)
+        .padding(.vertical)
     }
 }
 
 struct MarketSentimentSection: View {
-    @Query(filter: #Predicate<Token> { token in
-        token.totalPerc >= 5
-    }, sort: \Token.totalPerc, order: .reverse) private var bullishTokens: [Token]
-    
-    @Query(filter: #Predicate<Token> { token in
-        token.totalPerc <= -5
-    }, sort: \Token.totalPerc) private var bearishTokens: [Token]
+    @ObservedObject var viewModel: TokenViewModel
+    @State private var selectedToken: Token?
+    @State private var showingTokenDetail = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -76,33 +93,59 @@ struct MarketSentimentSection: View {
                 .font(.title2)
                 .bold()
             
-            VStack(alignment: .leading, spacing: 15) {
-                Text("Most Bullish")
-                    .font(.headline)
-                
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 15) {
-                        ForEach(bullishTokens.prefix(5), id: \.cryptocompareId) { token in
-                            SentimentCard(token: token)
+            if viewModel.isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding()
+            } else if let error = viewModel.error {
+                Text(error)
+                    .foregroundColor(.red)
+                    .padding()
+            } else {
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("Most Bullish")
+                        .font(.headline)
+                    
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 15) {
+                            ForEach(viewModel.getBullishTokens().prefix(5), id: \.cryptocompareId) { token in
+                                SentimentCard(token: token)
+                                    .onTapGesture {
+                                        selectedToken = token
+                                        showingTokenDetail = true
+                                    }
+                            }
                         }
+                        .padding(.horizontal)
                     }
-                    .padding(.horizontal)
+                }
+                
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("Most Bearish")
+                        .font(.headline)
+                    
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 15) {
+                            ForEach(viewModel.getBearishTokens().prefix(5), id: \.cryptocompareId) { token in
+                                SentimentCard(token: token)
+                                    .onTapGesture {
+                                        self.selectedToken = token
+                                        self.showingTokenDetail = true
+                                    }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
                 }
             }
-            
-            VStack(alignment: .leading, spacing: 15) {
-                Text("Most Bearish")
-                    .font(.headline)
-                
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 15) {
-                        ForEach(bearishTokens.prefix(5), id: \.cryptocompareId) { token in
-                            SentimentCard(token: token)
-                        }
-                    }
-                    .padding(.horizontal)
-                }
+        }
+        .sheet(isPresented: $showingTokenDetail) {
+            if let token = selectedToken {
+                TokenDetailView(token: token)
             }
+        }
+        .task {
+            await viewModel.fetchTokens()
         }
     }
 }
@@ -112,7 +155,7 @@ struct SentimentCard: View {
     
     var body: some View {
         VStack(alignment: .leading) {
-            Text(token.cryptocompareSymbol)
+            Text(token.symbol)
                 .font(.headline)
             
             HStack {
@@ -141,12 +184,15 @@ struct SentimentCard: View {
         .background(Color(.systemBackground))
         .cornerRadius(10)
         .shadow(radius: 2)
+        .padding(.vertical)
     }
 }
 
 struct NewsletterSection: View {
     @State private var email = ""
     @State private var isSubscribed = false
+    @State private var error: String?
+    @State private var isLoading = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -157,18 +203,28 @@ struct NewsletterSection: View {
             Text("Stay updated with crypto trends and analysis")
                 .foregroundColor(.secondary)
             
+            if let error = error {
+                Text(error)
+                    .foregroundColor(.red)
+                    .font(.caption)
+            }
+            
             if !isSubscribed {
                 HStack {
                     TextField("Enter your email", text: $email)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .textContentType(.emailAddress)
+                        .autocapitalization(.none)
                     
-                    Button("Subscribe") {
-                        // Handle newsletter subscription
-                        withAnimation {
-                            isSubscribed = true
+                    Button(action: handleSubscribe) {
+                        if isLoading {
+                            ProgressView()
+                        } else {
+                            Text("Subscribe")
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(isLoading)
                 }
             } else {
                 HStack {
@@ -183,5 +239,27 @@ struct NewsletterSection: View {
         .background(Color(.systemBackground))
         .cornerRadius(10)
         .shadow(radius: 2)
+    }
+    
+    private func handleSubscribe() {
+        guard isValidEmail(email) else {
+            error = "Please enter a valid email address"
+            return
+        }
+        
+        isLoading = true
+        error = nil
+        
+        // Simulate API call
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            isLoading = false
+            isSubscribed = true
+        }
+    }
+    
+    private func isValidEmail(_ email: String) -> Bool {
+        let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
+        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailRegex)
+        return emailPredicate.evaluate(with: email)
     }
 } 

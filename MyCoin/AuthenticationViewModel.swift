@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import SwiftData
 
 enum AuthenticationState: Equatable {
     case authenticated
@@ -34,8 +35,24 @@ class AuthenticationViewModel: ObservableObject {
     init() {
         // Check if we have a stored token
         if networkManager.loadTokenFromKeychain(forKey: "accessToken") != nil {
-            // TODO: Validate token with backend or decode JWT if available
-            state = .authenticated
+            // Token exists, try to verify it
+            Task {
+                await verifyToken()
+            }
+        }
+    }
+    
+    private func verifyToken() async {
+        if networkManager.loadTokenFromKeychain(forKey: "accessToken") != nil {
+            do {
+                // Try to fetch watchlist as a way to verify token
+                _ = try await networkManager.fetchWatchlist()
+                state = .authenticated
+            } catch {
+                state = .unauthenticated
+            }
+        } else {
+            state = .unauthenticated
         }
     }
     
@@ -48,13 +65,18 @@ class AuthenticationViewModel: ObservableObject {
         state = .authenticating
         
         do {
-            let response = try await networkManager.login(username: username, password: password)
+            let response = try await networkManager.login(email: username, password: password)
             currentUser = User(id: String(response.user.pk), email: response.user.email)
             state = .authenticated
-        } catch NetworkError.unauthorized {
-            state = .error("Invalid username or password")
-        } catch NetworkError.serverError(let message) {
-            state = .error(message)
+        } catch let error as NetworkError {
+            switch error {
+            case .unauthorized:
+                state = .error("Invalid email or password")
+            case .serverError(let message):
+                state = .error(message)
+            default:
+                state = .error("An unexpected error occurred")
+            }
         } catch {
             state = .error("An unexpected error occurred")
         }
@@ -79,12 +101,22 @@ class AuthenticationViewModel: ObservableObject {
         state = .authenticating
         
         do {
-            let registerResponse = try await networkManager.register(name: username, email: email, password: password)
-            let loginResponse = try await networkManager.login(username: registerResponse.email, password: password)
+            // First register the user
+            let registerResponse = try await networkManager.register(username: username, email: email, password: password)
+            
+            // Then login to get the tokens
+            let loginResponse = try await networkManager.login(email: email, password: password)
             currentUser = User(id: String(loginResponse.user.pk), email: loginResponse.user.email)
             state = .authenticated
-        } catch NetworkError.serverError(let message) {
-            state = .error(message)
+        } catch let error as NetworkError {
+            switch error {
+            case .serverError(let message):
+                state = .error(message)
+            case .unauthorized:
+                state = .error("Invalid credentials.")
+            default:
+                state = .error("An unexpected error occurred")
+            }
         } catch {
             state = .error("An unexpected error occurred")
         }
@@ -93,34 +125,29 @@ class AuthenticationViewModel: ObservableObject {
     func signInWithApple(userId: String, email: String?, fullName: String?) async {
         state = .authenticating
         
-        // Mock implementation for Apple Sign In
+        // TODO: Implement actual Apple Sign In
+        // This is a placeholder for the actual implementation
         do {
-            try await Task.sleep(nanoseconds: 1_000_000_000) // Simulate network delay
-            let user = User(id: userId, email: email ?? "apple_user@example.com")
-            currentUser = user
-            networkManager.setTokens(
-                accessToken: "mock_apple_access_token",
-                refreshToken: "mock_apple_refresh_token"
-            )
-            state = .authenticated
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            if let email = email {
+                currentUser = User(id: userId, email: email)
+                state = .authenticated
+            } else {
+                state = .error("Could not get email from Apple Sign In")
+            }
         } catch {
             state = .error("Apple Sign In failed")
         }
     }
     
-    func signInWithGoogle(userId: String, email: String, fullName: String) async {
+    func signInWithGoogle(idToken: String) async {
         state = .authenticating
         
-        // Mock implementation for Google Sign In
+        // TODO: Implement actual Google Sign In
+        // This is a placeholder for the actual implementation
         do {
-            try await Task.sleep(nanoseconds: 1_000_000_000) // Simulate network delay
-            let user = User(id: userId, email: email)
-            currentUser = user
-            networkManager.setTokens(
-                accessToken: "mock_google_access_token",
-                refreshToken: "mock_google_refresh_token"
-            )
-            state = .authenticated
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            state = .error("Google Sign In not implemented yet")
         } catch {
             state = .error("Google Sign In failed")
         }
@@ -129,11 +156,14 @@ class AuthenticationViewModel: ObservableObject {
     func signOut() async {
         do {
             try await networkManager.logout()
+            currentUser = nil
+            state = .unauthenticated
         } catch {
             print("Error during logout:", error)
+            // Still clear the user and tokens even if the server request fails
+            currentUser = nil
+            state = .unauthenticated
         }
-        currentUser = nil
-        state = .unauthenticated
     }
     
     // MARK: - Validation Helpers
