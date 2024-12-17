@@ -49,7 +49,9 @@ struct AuthResponse: Codable {
     }
 }
 
+// Request Models
 struct LoginRequest: Codable {
     let username: String
     let password: String
-} 
+}
+

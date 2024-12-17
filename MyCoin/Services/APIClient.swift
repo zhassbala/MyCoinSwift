@@ -36,16 +36,40 @@ enum HTTPMethod: String {
 class APIClient: APIClientProtocol {
     private let baseURL: String
     private let tokenService: TokenServiceProtocol
+    private let jsonDecoder: JSONDecoder
+    private let jsonEncoder: JSONEncoder
     
     init(baseURL: String, tokenService: TokenServiceProtocol) {
         self.baseURL = baseURL
         self.tokenService = tokenService
+        
+        // Configure JSON decoder/encoder
+        self.jsonDecoder = JSONDecoder()
+        self.jsonEncoder = JSONEncoder()
     }
     
     // Generic request method with type T, similar to axios.request<T>()
     func request<T: Decodable>(_ endpoint: APIEndpoint) async throws -> T {
         let request = try await createRequest(for: endpoint)
+        
+        // Print request details for debugging
+        print("Request URL:", request.url?.absoluteString ?? "")
+        print("Request Method:", request.httpMethod ?? "")
+        print("Request Headers:", request.allHTTPHeaderFields ?? [:])
+        if let body = request.httpBody, let bodyString = String(data: body, encoding: .utf8) {
+            print("Request Body:", bodyString)
+        }
+        
         let (data, response) = try await URLSession.shared.data(for: request)
+        
+        // Print response details for debugging
+        if let httpResponse = response as? HTTPURLResponse {
+            print("Response Status:", httpResponse.statusCode)
+            print("Response Headers:", httpResponse.allHeaderFields)
+        }
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("Response Body:", responseString)
+        }
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.serverError("Invalid response")
@@ -56,28 +80,40 @@ class APIClient: APIClientProtocol {
         case 200...299:
             do {
                 // Parse JSON response, similar to response.json() in fetch
-                return try JSONDecoder().decode(T.self, from: data)
+                return try jsonDecoder.decode(T.self, from: data)
             } catch {
+                print("Decoding Error:", error)
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("Failed to decode:", responseString)
+                }
                 throw NetworkError.decodingError
             }
         case 401:
             throw NetworkError.unauthorized
         default:
-            throw NetworkError.serverError("Status code: \(httpResponse.statusCode)")
+            if let errorString = String(data: data, encoding: .utf8) {
+                throw NetworkError.serverError("Status code: \(httpResponse.statusCode), Error: \(errorString)")
+            } else {
+                throw NetworkError.serverError("Status code: \(httpResponse.statusCode)")
+            }
         }
     }
     
     // Request without response data
     func request(_ endpoint: APIEndpoint) async throws {
         let request = try await createRequest(for: endpoint)
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.serverError("Invalid response")
         }
         
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw NetworkError.serverError("Status code: \(httpResponse.statusCode)")
+            if let errorString = String(data: data, encoding: .utf8) {
+                throw NetworkError.serverError("Status code: \(httpResponse.statusCode), Error: \(errorString)")
+            } else {
+                throw NetworkError.serverError("Status code: \(httpResponse.statusCode)")
+            }
         }
     }
     
@@ -99,7 +135,7 @@ class APIClient: APIClientProtocol {
         
         // Add request body if provided, similar to axios data parameter
         if let body = endpoint.body {
-            request.httpBody = try? JSONEncoder().encode(body)
+            request.httpBody = try jsonEncoder.encode(body)
         }
         
         return request

@@ -18,14 +18,13 @@ class AuthService: AuthServiceProtocol {
     
     func login(email: String, password: String) async throws -> User {
         let loginRequest = LoginRequest(username: email, password: password)
-        print(loginRequest)
+        
         let endpoint = APIEndpoint(
             path: "/auth/login/",
             method: .post,
             body: loginRequest,
             requiresAuth: false
         )
-        print(endpoint)
         
         let response: AuthResponse = try await apiClient.request(endpoint)
         try tokenService.saveTokens(
@@ -52,7 +51,7 @@ class AuthService: AuthServiceProtocol {
         )
         
         let endpoint = APIEndpoint(
-            path: "/auth/register",
+            path: "/auth/register/",
             method: .post,
             body: registerRequest,
             requiresAuth: false
@@ -75,13 +74,13 @@ class AuthService: AuthServiceProtocol {
     }
     
     func logout() async throws {
-        let endpoint = APIEndpoint(path: "/auth/logout", method: .post)
+        let endpoint = APIEndpoint(path: "/auth/logout/", method: .post)
         try await apiClient.request(endpoint)
         try tokenService.clearTokens()
     }
     
     func getCurrentUser() async throws -> User {
-        let endpoint = APIEndpoint(path: "/auth/me")
+        let endpoint = APIEndpoint(path: "/auth/me/")
         let response: UserResponse = try await apiClient.request(endpoint)
         
         return User(
@@ -94,7 +93,7 @@ class AuthService: AuthServiceProtocol {
 }
 
 // Request Models
-private struct RegisterRequest: Codable {
+struct RegisterRequest: Codable {
     let email: String
     let password: String
     let firstName: String
