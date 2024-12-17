@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AuthenticationServices
 
 struct LoginView: View {
@@ -164,7 +165,7 @@ struct RegistrationView: View {
                                 email: email,
                                 password: password
                             )
-                            if authViewModel.isAuthenticated {
+                            if case .authenticated = authViewModel.state {
                                 dismiss()
                             }
                         }
@@ -189,6 +190,10 @@ struct RegistrationView: View {
 }
 
 #Preview {
+    let config = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try! ModelContainer(for: Token.self, configurations: config)
+    
     LoginView()
         .environmentObject(AuthenticationViewModel())
+        .modelContainer(container)
 } 

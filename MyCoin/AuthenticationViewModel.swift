@@ -3,43 +3,76 @@ import SwiftUI
 import SwiftData
 
 enum AuthenticationState: Equatable {
+    case idle
+    case authenticating
     case authenticated
     case unauthenticated
-    case authenticating
     case error(String)
-    
-    static func == (lhs: AuthenticationState, rhs: AuthenticationState) -> Bool {
-        switch (lhs, rhs) {
-        case (.authenticated, .authenticated),
-             (.unauthenticated, .unauthenticated),
-             (.authenticating, .authenticating):
-            return true
-        case (.error(let lhsError), .error(let rhsError)):
-            return lhsError == rhsError
-        default:
-            return false
-        }
-    }
 }
 
 @MainActor
 class AuthenticationViewModel: ObservableObject {
-    @Published var state: AuthenticationState = .unauthenticated
-    @Published var currentUser: User?
+    @Published private(set) var state: AuthenticationState = .idle
+    @Published private(set) var currentUser: User?
     private let networkManager = NetworkManager.shared
-    
-    var isAuthenticated: Bool {
-        currentUser != nil && state == .authenticated
-    }
+    private var modelContext: ModelContext?
     
     init() {
-        // Check if we have a stored token
+        self.state = .unauthenticated
+        
         if networkManager.loadTokenFromKeychain(forKey: "accessToken") != nil {
-            // Token exists, try to verify it
             Task {
                 await verifyToken()
             }
         }
+    }
+    
+    func setModelContext(_ context: ModelContext) {
+        self.modelContext = context
+        
+        // Try to restore authentication state
+        let descriptor = FetchDescriptor<AuthState>()
+        if let authState = try? context.fetch(descriptor).first {
+            if authState.isAuthenticated {
+                self.state = .authenticated
+                if let userId = authState.userId, let userEmail = authState.userEmail {
+                    self.currentUser = User(id: userId, email: userEmail)
+                }
+            } else {
+                self.state = .unauthenticated
+            }
+        } else {
+            // Create initial auth state
+            let authState = AuthState()
+            context.insert(authState)
+            try? context.save()
+            self.state = .unauthenticated
+        }
+    }
+    
+    private func setState(_ newState: AuthenticationState) {
+        state = newState
+        
+        guard let modelContext = modelContext else { return }
+        
+        // Update persistent auth state
+        let descriptor = FetchDescriptor<AuthState>()
+        guard let authState = try? modelContext.fetch(descriptor).first else { return }
+        
+        switch newState {
+        case .authenticated:
+            authState.isAuthenticated = true
+            authState.userId = currentUser?.id
+            authState.userEmail = currentUser?.email
+        case .unauthenticated:
+            authState.isAuthenticated = false
+            authState.userId = nil
+            authState.userEmail = nil
+        default:
+            break
+        }
+        
+        try? modelContext.save()
     }
     
     private func verifyToken() async {
@@ -47,83 +80,83 @@ class AuthenticationViewModel: ObservableObject {
             do {
                 // Try to fetch watchlist as a way to verify token
                 _ = try await networkManager.fetchWatchlist()
-                state = .authenticated
+                setState(.authenticated)
             } catch {
-                state = .unauthenticated
+                setState(.unauthenticated)
             }
         } else {
-            state = .unauthenticated
+            setState(.unauthenticated)
         }
     }
     
     func signIn(username: String, password: String) async {
         guard !username.isEmpty, !password.isEmpty else {
-            state = .error("Please fill in all fields")
+            setState(.error("Please fill in all fields"))
             return
         }
         
-        state = .authenticating
+        setState(.authenticating)
         
         do {
             let response = try await networkManager.login(email: username, password: password)
             currentUser = User(id: String(response.user.pk), email: response.user.email)
-            state = .authenticated
+            setState(.authenticated)
         } catch let error as NetworkError {
             switch error {
             case .unauthorized:
-                state = .error("Invalid email or password")
+                setState(.error("Invalid email or password"))
             case .serverError(let message):
-                state = .error(message)
+                setState(.error(message))
             default:
-                state = .error("An unexpected error occurred")
+                setState(.error("An unexpected error occurred"))
             }
         } catch {
-            state = .error("An unexpected error occurred")
+            setState(.error("An unexpected error occurred"))
         }
     }
     
     func signUp(username: String, email: String, password: String) async {
         guard !username.isEmpty, !email.isEmpty, !password.isEmpty else {
-            state = .error("Please fill in all fields")
+            setState(.error("Please fill in all fields"))
             return
         }
         
         guard isValidEmail(email) else {
-            state = .error("Please enter a valid email address")
+            setState(.error("Please enter a valid email address"))
             return
         }
         
         guard isValidPassword(password) else {
-            state = .error("Password must be at least 8 characters long and contain at least one number")
+            setState(.error("Password must be at least 8 characters long and contain at least one number"))
             return
         }
         
-        state = .authenticating
+        setState(.authenticating)
         
         do {
             // First register the user
             let registerResponse = try await networkManager.register(username: username, email: email, password: password)
             
             // Then login to get the tokens
-            let loginResponse = try await networkManager.login(email: email, password: password)
+            let loginResponse = try await networkManager.login(email: registerResponse.email, password: password)
             currentUser = User(id: String(loginResponse.user.pk), email: loginResponse.user.email)
-            state = .authenticated
+            setState(.authenticated)
         } catch let error as NetworkError {
             switch error {
             case .serverError(let message):
-                state = .error(message)
+                setState(.error(message))
             case .unauthorized:
-                state = .error("Invalid credentials.")
+                setState(.error("Invalid credentials."))
             default:
-                state = .error("An unexpected error occurred")
+                setState(.error("An unexpected error occurred"))
             }
         } catch {
-            state = .error("An unexpected error occurred")
+            setState(.error("An unexpected error occurred"))
         }
     }
     
     func signInWithApple(userId: String, email: String?, fullName: String?) async {
-        state = .authenticating
+        setState(.authenticating)
         
         // TODO: Implement actual Apple Sign In
         // This is a placeholder for the actual implementation
@@ -131,25 +164,25 @@ class AuthenticationViewModel: ObservableObject {
             try await Task.sleep(nanoseconds: 1_000_000_000)
             if let email = email {
                 currentUser = User(id: userId, email: email)
-                state = .authenticated
+                setState(.authenticated)
             } else {
-                state = .error("Could not get email from Apple Sign In")
+                setState(.error("Could not get email from Apple Sign In"))
             }
         } catch {
-            state = .error("Apple Sign In failed")
+            setState(.error("Apple Sign In failed"))
         }
     }
     
     func signInWithGoogle(idToken: String) async {
-        state = .authenticating
+        setState(.authenticating)
         
         // TODO: Implement actual Google Sign In
         // This is a placeholder for the actual implementation
         do {
             try await Task.sleep(nanoseconds: 1_000_000_000)
-            state = .error("Google Sign In not implemented yet")
+            setState(.error("Google Sign In not implemented yet"))
         } catch {
-            state = .error("Google Sign In failed")
+            setState(.error("Google Sign In failed"))
         }
     }
     
@@ -157,12 +190,12 @@ class AuthenticationViewModel: ObservableObject {
         do {
             try await networkManager.logout()
             currentUser = nil
-            state = .unauthenticated
+            setState(.unauthenticated)
         } catch {
             print("Error during logout:", error)
             // Still clear the user and tokens even if the server request fails
             currentUser = nil
-            state = .unauthenticated
+            setState(.unauthenticated)
         }
     }
     

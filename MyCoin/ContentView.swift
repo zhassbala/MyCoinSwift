@@ -9,18 +9,22 @@ import SwiftUI
 import SwiftData
 
 struct ContentView: View {
-    @StateObject private var authViewModel = AuthenticationViewModel()
     @Environment(\.modelContext) private var modelContext
+    @StateObject private var authViewModel = AuthenticationViewModel()
     
     var body: some View {
         Group {
-            if authViewModel.isAuthenticated {
+            if case .authenticated = authViewModel.state {
                 MainTabView()
                     .environmentObject(authViewModel)
+                    .environment(\.modelContext, modelContext)
             } else {
                 LoginView()
                     .environmentObject(authViewModel)
             }
+        }
+        .onAppear {
+            authViewModel.setModelContext(modelContext)
         }
     }
 }
@@ -28,22 +32,23 @@ struct ContentView: View {
 struct MainTabView: View {
     @State private var selectedTab = 0
     @EnvironmentObject var authViewModel: AuthenticationViewModel
+    @Environment(\.modelContext) private var modelContext
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            DashboardView()
+            DashboardView(viewModel: TokenViewModel(modelContext: modelContext))
                 .tabItem {
                     Label("Dashboard", systemImage: "chart.line.uptrend.xyaxis")
                 }
                 .tag(0)
             
-            ExploreView()
+            ExploreView(viewModel: TokenViewModel(modelContext: modelContext))
                 .tabItem {
                     Label("Explore", systemImage: "magnifyingglass")
                 }
                 .tag(1)
             
-            WatchlistView()
+            WatchlistView(viewModel: TokenViewModel(modelContext: modelContext))
                 .tabItem {
                     Label("Watchlist", systemImage: "star.fill")
                 }
@@ -60,7 +65,7 @@ struct MainTabView: View {
 }
 
 struct DashboardView: View {
-    @StateObject private var viewModel = TokenViewModel()
+    @ObservedObject var viewModel: TokenViewModel
     
     var body: some View {
         NavigationView {
@@ -84,7 +89,7 @@ struct DashboardView: View {
 }
 
 struct ExploreView: View {
-    @StateObject private var viewModel = TokenViewModel()
+    @ObservedObject var viewModel: TokenViewModel
     @State private var searchText = ""
     @State private var selectedToken: Token?
     @State private var showingTokenDetail = false
@@ -129,7 +134,7 @@ struct ExploreView: View {
             .navigationTitle("Explore")
             .sheet(isPresented: $showingTokenDetail) {
                 if let token = selectedToken {
-                    TokenDetailView(token: token)
+                    TokenDetailView(token: token, viewModel: viewModel)
                 }
             }
         }
@@ -140,7 +145,7 @@ struct ExploreView: View {
 }
 
 struct WatchlistView: View {
-    @StateObject private var viewModel = TokenViewModel()
+    @ObservedObject var viewModel: TokenViewModel
     @State private var selectedToken: Token?
     @State private var showingTokenDetail = false
     
@@ -191,7 +196,7 @@ struct WatchlistView: View {
             .navigationTitle("Watchlist")
             .sheet(isPresented: $showingTokenDetail) {
                 if let token = selectedToken {
-                    TokenDetailView(token: token)
+                    TokenDetailView(token: token, viewModel: viewModel)
                 }
             }
         }
@@ -289,8 +294,8 @@ struct TokenRow: View {
 
 struct TokenDetailView: View {
     let token: Token
+    @ObservedObject var viewModel: TokenViewModel
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var viewModel = TokenViewModel()
     @State private var detailedToken: Token?
     @State private var selectedTab = 0
     @State private var isLoading = true
@@ -554,6 +559,9 @@ struct CryptoEducationView: View {
 }
 
 #Preview {
+    let config = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try! ModelContainer(for: Token.self, AuthState.self, configurations: config)
+    
     ContentView()
-        .modelContainer(for: Token.self, inMemory: true)
+        .modelContainer(container)
 }

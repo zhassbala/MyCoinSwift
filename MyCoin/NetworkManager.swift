@@ -47,9 +47,21 @@ struct LoginRequest: Codable {
 }
 
 struct RegisterRequest: Codable {
-    let username: String
+    let name: String
     let email: String
     let password: String
+}
+
+struct RegisterResponse: Codable {
+    let name: String
+    let email: String
+    let profilePic: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case profilePic = "profile_pic"
+        case name
+        case email
+    }
 }
 
 struct TokenRefreshRequest: Codable {
@@ -183,11 +195,11 @@ class NetworkManager {
         return response
     }
     
-    func register(username: String, email: String, password: String) async throws -> UserResponse {
+    func register(username: String, email: String, password: String) async throws -> RegisterResponse {
         let url = URL(string: "\(baseURL)/auth/register")!
-        let request = RegisterRequest(username: username, email: email, password: password)
-        let response: AuthResponse = try await performRequest(url: url, method: "POST", body: request)
-        return response.user
+        let request = RegisterRequest(name: username, email: email, password: password)
+        let response: RegisterResponse = try await performRequest(url: url, method: "POST", body: request)
+        return response
     }
     
     func logout() async throws {
@@ -324,22 +336,26 @@ class NetworkManager {
             urlComponents.queryItems = queryItems
         }
         
-        return try await performRequest(url: urlComponents.url!, method: "GET", body: Optional<EmptyRequest>.none)
+        let dtos: [TokenDTO] = try await performRequest(url: urlComponents.url!, method: "GET", body: Optional<EmptyRequest>.none)
+        return dtos.map { Token(from: $0) }
     }
     
     func fetchTokenSummary(tokenId: String) async throws -> Token {
         let url = URL(string: "\(baseURL)/token/\(tokenId)/summary")!
-        return try await performRequest(url: url, method: "GET", body: Optional<EmptyRequest>.none)
+        let dto: TokenDTO = try await performRequest(url: url, method: "GET", body: Optional<EmptyRequest>.none)
+        return Token(from: dto)
     }
     
     func fetchTokenDetails(tokenId: String) async throws -> Token {
         let url = URL(string: "\(baseURL)/token/\(tokenId)/full")!
-        return try await performRequest(url: url, method: "GET", body: Optional<EmptyRequest>.none)
+        let dto: TokenDTO = try await performRequest(url: url, method: "GET", body: Optional<EmptyRequest>.none)
+        return Token(from: dto)
     }
     
     func fetchWatchlist() async throws -> [Token] {
         let url = URL(string: "\(baseURL)/watchlist/")!
-        return try await performRequest(url: url, method: "GET", body: Optional<EmptyRequest>.none)
+        let dtos: [TokenDTO] = try await performRequest(url: url, method: "GET", body: Optional<EmptyRequest>.none)
+        return dtos.map { Token(from: $0) }
     }
     
     func addToWatchlist(tokenId: String) async throws {

@@ -41,7 +41,7 @@ struct WatchlistSection: View {
         }
         .sheet(isPresented: $showingTokenDetail) {
             if let token = selectedToken {
-                TokenDetailView(token: token)
+                TokenDetailView(token: token, viewModel: viewModel)
             }
         }
         .task {
@@ -141,7 +141,7 @@ struct MarketSentimentSection: View {
         }
         .sheet(isPresented: $showingTokenDetail) {
             if let token = selectedToken {
-                TokenDetailView(token: token)
+                TokenDetailView(token: token, viewModel: viewModel)
             }
         }
         .task {
